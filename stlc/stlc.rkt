@@ -1,4 +1,5 @@
 #lang racket
+(require rackunit)
 
 ;; A simply typed lambda calculus with booleans, integers, conditionals, and
 ;; syntactic sugar for recursion via `letrec`.
@@ -174,12 +175,81 @@ primop ::= +
     (typecheck e)
     (interp e)))
 
+; --- Basic Expression Tests ---
 
-(run/stlc '((λ (x : int) (+ 1 x)) 3))
-(run/stlc '(letrec ([a : int = 1]
-                    [until-zero
-                     : (int -> int) =
-                     (λ (num : int) (if (zero? num)
-                                        0
-                                        (until-zero (- num 1))))])
-             (until-zero a)))
+(check-equal? (run/stlc '5) 5)
+(check-equal? (run/stlc '#t) #t)
+
+;; --- Primitive Operations Tests ---
+
+(check-equal? (run/stlc '(+ 1 2)) 3)
+(check-equal? (run/stlc '(* 5 10)) 50)
+(check-equal? (run/stlc '(- 10 3)) 7)
+(check-equal? (run/stlc '(zero? 0)) #t)
+(check-equal? (run/stlc '(zero? 10)) #f)
+
+;; --- Conditional Tests ---
+
+(check-equal? (run/stlc '(if #t 1 2)) 1)
+(check-equal? (run/stlc '(if #f 1 2)) 2)
+(check-equal? (run/stlc '(if (zero? 0) (+ 1 1) (* 2 2))) 2)
+
+;; --- Function Application Tests ---
+
+(check-equal? (run/stlc '((λ (x : int) x) 5)) 5)
+(check-equal? (run/stlc '((λ (x : int) (+ x 1)) 99)) 100)
+(check-equal? (run/stlc '(((λ (f : (int -> int))
+                             (λ (x : int) (+ 1 (f x))))
+                           (λ (y : int) (* y 2))) 5)) 11)
+
+;; --- Letrec and Recursion Tests ---
+
+(check-equal? (run/stlc '(letrec ([x : int = 10]) x)) 10)
+(check-equal? (run/stlc '(letrec ([x : int = 1] [y : int = 2]) (+ x y))) 3)
+(check-equal? (run/stlc '(letrec ([fact : (int -> int) =
+                                        (λ (n : int)
+                                          (if (zero? n)
+                                              1
+                                              (* n (fact (- n 1)))))])
+                           (fact 5)))
+              120)
+
+;; --- Type Error Tests ---
+
+(check-exn exn:fail?
+           (λ () (run/stlc '(if 1 2 3)))
+           "Mismatched types: Expected (BoolType) got (IntType)")
+
+(check-exn exn:fail?
+           (λ () (run/stlc '(if #t 1 #f)))
+           "Mismatched types: Expected (IntType) got (BoolType)")
+
+(check-exn exn:fail?
+           (λ () (run/stlc '(+ 1 #t)))
+           "Mismatched types: Expected (IntType) got (BoolType)")
+
+(check-exn exn:fail?
+           (λ () (run/stlc '(zero? #t)))
+           "Mismatched types: Expected (IntType) got (BoolType)")
+
+(check-exn exn:fail?
+           (λ () (run/stlc '(1 2)))
+           "Expected a function in operator position, got: (IntType)")
+
+(check-exn exn:fail?
+           (λ () (run/stlc '((λ (x : int) x) #t)))
+           "Mismatched types: Expected (IntType) got (BoolType)")
+
+(check-exn exn:fail?
+           (λ () (run/stlc '(letrec ([x : int = #t]) x)))
+           "Mismatched types: Expected (IntType) got (BoolType)")
+
+(check-exn exn:fail?
+           (λ () (run/stlc '(letrec ([x : 
+                                             (int -> int) = 
+                                             (λ (y : int) #t)]) (x 1))))
+           "Mismatched types: Expected (IntType) got (BoolType)")
+
+(check-exn exn:fail?
+           (λ () (run/stlc '(+ 1 z)))
+           "'z' is unbound")
