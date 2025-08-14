@@ -30,7 +30,8 @@ primop ::= +
 ;; - Boolean
 
 ;; STLC -> Value
-;; inter: Given a *well-typed* STLC expression, evaluates its value.
+;; inter: Given a *well-typed* (i.e null ⊢ e: T) STLC expression, evaluates
+;; its value.
 (define (interp e)
   (let interp ([e e]
                [env (make-hasheq)])
@@ -69,8 +70,8 @@ primop ::= +
       [_ (error 'interp "Invalid term: ~a" e)])))
 
 ;; Type is one of:
-(struct IntType ())
-(struct BoolType ())
+(struct IntType () #:transparent)
+(struct BoolType () #:transparent)
 (struct FunType (
                  arg ;; Type
                  body ;; Type
@@ -87,7 +88,7 @@ primop ::= +
 
 (define-syntax-rule (assert-type ty expected)
   (let ([ty-val ty])
-    (unless (eq? ty-val (parse-type expected))
+    (unless (equal? ty-val expected)
       (error 'typecheck
              "Mismatched types: Expected ~a got ~a"
              expected ty-val))))
@@ -97,16 +98,24 @@ primop ::= +
 ;; STLC program.
 (define (typecheck e)
   (let typecheck ([e e]
-                  [env (make-hasheq)])
+                  [env (make-hash)])
     (match e
-      [(? symbol?) (dict-ref env e)]
+      [(? symbol?)
+       (with-handlers
+           ([exn:fail:contract?
+             (lambda (exn)
+               (error 'lookup
+                      "'~a' is unbound"
+                      e))])
+         (dict-ref env e))
+       ]
       [(? integer?) (IntType)]
       [(? boolean?) (BoolType)]
 
       [`(λ (,x : ,ty) ,e)
        (begin
-         (define env^ (dict-copy env))
          (define arg-ty (parse-type ty))
+         (define env^ (dict-copy env))
          (dict-set! env^ x arg-ty)
          (FunType arg-ty (typecheck e env^)))]
 
@@ -134,20 +143,43 @@ primop ::= +
            conseq-ty))]
 
       [`(,prim-op ,es ...)
-       #:when (memq prim-op '(- + * zero?))
+       #:when (memq prim-op '(- + *))
        (for ([e es])
-         (assert-type (typecheck e) (IntType)))
+         (assert-type (typecheck e env) (IntType)))
        (IntType)]
+
+      [`(,prim-op ,es ...)
+       #:when (memq prim-op '(zero?))
+       (for ([e es])
+         (assert-type (typecheck e env) (IntType)))
+       (BoolType)]
 
       [`(,e1 ,e2)
        (let ([operator-ty (typecheck e1 env)]
              [operand-ty  (typecheck e2 env)])
-        (begin 
-          (unless (FunType? operand-ty) 
-            (error 'typecheck 
-                   "Expected a function in operator position, got: ~a"
-                   operand-ty))
-          (assert-type operand-ty (FunType-arg operator-ty))
-          (FunType-body operator-ty)))]
+         (begin
+           (unless (FunType? operator-ty)
+             (error 'typecheck
+                    "Expected a function in operator position, got: ~a"
+                    operand-ty))
+           (assert-type operand-ty (FunType-arg operator-ty))
+           (FunType-body operator-ty)))]
 
       [_ (error 'interp "Invalid term: ~a" e)])))
+
+;; S-exp -> Value
+;; interp: Run the given STLC program
+(define (run/stlc e)
+  (begin
+    (typecheck e)
+    (interp e)))
+
+
+(run/stlc '((λ (x : int) (+ 1 x)) 3))
+(run/stlc '(letrec ([a : int = 1]
+                    [until-zero
+                     : (int -> int) =
+                     (λ (num : int) (if (zero? num)
+                                        0
+                                        (until-zero (- num 1))))])
+             (until-zero a)))
